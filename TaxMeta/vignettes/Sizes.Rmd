@@ -17,7 +17,7 @@ opts_chunk$set(cache=TRUE)
 
 
 # Variability in mammal size
-
+## Load data
 ```{r load sizes data}
 data('sizes')
 head(sizes)
@@ -27,9 +27,11 @@ head(sizes)
 
 ```{r get taxonomy,warning=FALSE, message=FALSE}
 
-taxonomy = c('species','genus','family','order')
+taxonomy = c('genus','family','order')
 
 ```
+
+## Run taxonomic meta-analysis
 We can now apply the meta-analysis:
 
 ```{r run anlysis}
@@ -41,10 +43,10 @@ sizes_res_full <- TaxMeta(sizes,
                        type='full',
                        loo_waic = T,
                        n.chains = 3,
-                       n.iter = 50e3,
-                       n.thin=25,
-                       n.burnin=10e3,
-                       return_MCMC=F)
+                       n.iter = 10e3,
+                       n.thin=5,
+                       n.burnin=2e3,
+                       return_MCMC=T)
 
 sizes_res_full
 ```
@@ -53,31 +55,31 @@ To plot the contributions of different taxonomic levels, simply plot the result:
 
 ```{r plot, fig.width = 7,  fig.height = 5}
 
-plot(sizes_res_full, 
-     taxonomy = taxonomy)
+plot(sizes_res_full)
 
 ```
 
+## Predictions
 To generate predictions at other taxonomic levels, simply add some bogus data to the data. Say, we need an estimate for a species for which the genus was not in the orginal dataset, but the family was part of the dataset:
 
 ```{r predictions}
 
 sizes_pred <- sizes
-sizes_pred[length(sizes_pred)+1,] <- sizes_pred[11,]
-sizes_pred[length(sizes_pred)+2,] <- sizes_pred[11,]
+sizes_pred[nrow(sizes)+1,] <- sizes_pred[11,]
+sizes_pred[nrow(sizes)+2,] <- sizes_pred[11,]
 
-sizes_pred[length(sizes_full)+1,'genus'] <- 'bogus_genus'
-sizes_pred[length(sizes_full)+1,'species'] <- 'Bogus species'
-sizes_pred[length(sizes_full)+1,'z_response'] <- NA
-sizes_pred[length(sizes_full)+2,'species'] <- 'Bogus species'
-sizes_pred[length(sizes_full)+2,'z_response'] <- NA
+sizes_pred[nrow(sizes)+1,'genus'] <- 'bogus_genus'
+sizes_pred[nrow(sizes)+1,'species'] <- 'Bogus species'
+sizes_pred[nrow(sizes)+1,'lmass'] <- NA
+sizes_pred[nrow(sizes)+2,'species'] <- 'Bogus species'
+sizes_pred[nrow(sizes)+2,'lmass'] <- NA
 
 sizes_res_pred <- TaxMeta(sizes_pred,
                       'lmass',
                        distribution = 'norm',
                        taxonomy = taxonomy,
                        type='full',
-                       loo_waic = T,
+                       loo_waic = F,
                        n.chains = 3,
                        n.iter = 50e3,
                        n.thin=25,
@@ -87,15 +89,14 @@ sizes_res_pred <- TaxMeta(sizes_pred,
 sizes_res_pred
 
 ```
-
+## Alternative models
 We can also compare alternative model formulations:
 
 ```{r run alternative models}
 
-sizes_res_fixed <- TaxMeta(sizes_full,
+sizes_res_fixed <- TaxMeta(sizes,
                        'lmass',
                        distribution = 'norm',
-                       study_epsilon = 'se',
                        taxonomy = taxonomy,
                        type='fixed',
                        scale=0.1,
@@ -106,10 +107,9 @@ sizes_res_fixed <- TaxMeta(sizes_full,
                        n.burnin=5e3,
                        return_MCMC=F)
 
-sizes_res_gamma <- TaxMeta(sizes_full,
+sizes_res_gamma <- TaxMeta(sizes,
                        'lmass',
                        distribution = 'norm',
-                       study_epsilon = 'se',
                        taxonomy = taxonomy,
                        type='gamma',
                        loo_waic = T,
@@ -119,10 +119,9 @@ sizes_res_gamma <- TaxMeta(sizes_full,
                        n.burnin=5e3,
                        return_MCMC=F)
 
-sizes_res_unif <- TaxMeta(sizes_full,
-                       'z_response',
+sizes_res_unif <- TaxMeta(sizes,
+                       'lmass',
                        distribution = 'norm',
-                       study_epsilon = 'se',
                        taxonomy = taxonomy,
                        type='uniform',
                        loo_waic = T,
@@ -172,8 +171,7 @@ This comparison does not give a good idea of model performance, so lets try a pl
 plot(Full=sizes_res_full, 
      Fixed =sizes_res_fixed, 
      Gamma =sizes_res_gamma,
-     Uniform=sizes_res_unif,
-     taxonomy=taxonomy)
+     Uniform=sizes_res_unif)
 
 ```
   

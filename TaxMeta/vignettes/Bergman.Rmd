@@ -6,6 +6,7 @@ output: pdf_document
 ---
 ```{r echo=F,message=F,warning=FALSE,results='hide'}
 require(TaxMeta)
+require(rfishbase)
 require(knitr)
 require(lme4)
 
@@ -20,6 +21,18 @@ opts_chunk$set(cache=TRUE, autodep=TRUE, warning = FALSE ,message=F)
 Using the supplied Bergman dataset:
 
 ```{r load Bergman data, cache=TRUE}
+
+bft <- ape::read.tree('../RAxMLThree_Plus_24_part.txt')
+
+spg <- do.call('rbind',strsplit(bft$tip.label,'_'))[,2:4]
+
+drop.tips <- apply(spg,1,function(x) x[1] %in% fishbase$Genus & x[2] %in% fishbase$Species)
+tips <- apply(spg,1,function(x) which(fishbase$Genus==x[1] & fishbase$Species==x[2]))
+
+natips <- lapply(tips, function(x) {ifelse(length(x)>0,x,NA)})
+
+fishbase[unlist(tips),]
+
 data('Bergman')
 head(Bergman)
 ```  

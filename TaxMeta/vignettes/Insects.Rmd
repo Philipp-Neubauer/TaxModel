@@ -4,7 +4,10 @@ author: "Philipp Neubauer"
 date: "`r Sys.Date()`"
 output: 
   pdf_document: 
+    keep_tex: true
     latex_engine: xelatex
+    includes:
+      in_header: header.tex 
 ---
 
 ```{r echo=F,message=F,warning=FALSE,results='hide'}
@@ -36,7 +39,7 @@ head(insects)
 taxonomy = c('Species','Genus','Family','Order')
 
 ```
-## Run taxonomic meta-analysis
+## Run taxonomic meta-analysis in LME4
 
 After some data manipulation, we can now apply the meta-analysis:
 
@@ -72,9 +75,9 @@ vcv <- as.data.frame(lme4::VarCorr(lmm.ins))
 vcv$vcov/sum(vcv$vcov)
 ```
 
-These results match those in Jarosik et al. 2011; with most of the variation at the order level (even when including the predictor...).
+These results match those in Jarosik et al. 2011; with most of the variation at the order level (even when including the predictor...). To compare models, I run a 10-fold cross validation on the data.
 
-```{r} 
+```{r fig.cap='Observed versus preducted value of $log_{10}$ transformed degree days to maturity in insects, estimated from a taxonomic linear mixed model using the LME4 package.'} 
 # out of sample prediction - species
 spec <- as.numeric(as.factor(insects_ss$Species))
 ssamp <- sample(1:10,max(spec),r=T)
@@ -85,37 +88,47 @@ for (i in 1:10){
   lm.cv.spred[spec%in%which(ssamp==i),] <-  merTools::predictInterval(this.lm.ins, insects_ss[spec%in%which(ssamp==i),], n.sims=1000, type = "linear.prediction")
   
 }
-
-plot(insects_ss$lDD,lm.cv.spred[,1], xlab='Observed', ylab='Predicted')
-arrows(insects_ss$lDD, lm.cv.spred[,2], insects_ss$lDD, lm.cv.spred[,3], length=0.05, angle=90, code=3)
-abline(a=0,b=1)
 ```
 
-How does TaxMeta compare?
+## How does TaxMeta compare?
 
-```{r}
+First, a small illustration of differences in estimates for studies without degree day data in the database. Note that for some species in the database, multiple studies are available, only some of which may have DD data. For other data with missing DD data, there may be no other studies for that species - and predictions are thus made from higher taxonomic level information.
+
+\newpage
+\blandscape
+
+```{r fig.cap='Predictions from taxonomic models estimated in LME4 and TaxMeta for data with missing degree day information.', fig.width=11,fig.height=8}
 
 insects_res_full <- TaxMeta(insects[!is.na(insects$lBDT),],
                        'lDD',
                        distribution = 'norm',
                        taxonomy = taxonomy,
+                       save_tax=taxonomy,
                        type='full',
                        cont_cov = 'lBDT',
                        loo_waic = T,
                        n.chains = 3,
-                       n.iter = 15e3,
-                       n.thin=2,
+                       n.iter = 50e3,
+                       n.thin=25,
                        n.burnin=5e3,
                        return_MCMC=T)
 
+# data without degree day information
+ii <- insects[is.na(insects$lDD)&!is.na(insects$lBDT),]
 
-lm.pred$est <- 'LME4'
+# prediction
+lm.pred <- merTools::predictInterval(lmm.ins,newdata=ii)
+reSims <- merTools::REsim(lmm.ins, n.sims = 1000)
+#merTools::plotREsim(reSims, stat = 'median', sd = TRUE)
+#reSims %>% filter(groupFctr=='Family')
+
+lm.pred$Model <- 'LME4'
 lm.pred$ind <- 1:nrow(lm.pred)
 
 allfx <- summary(insects_res_full$result)[[2]]
 tax.pred <- data.frame(allfx[grepl('pred',rownames(allfx)),c(3,1,5)])
 colnames(tax.pred) <- colnames(lm.pred)[1:3]
-tax.pred$est <- 'TaxMeta'
+tax.pred$Model <- 'TaxMeta'
 tax.pred$ind <- 1:nrow(tax.pred)
 preds <- rbind(tax.pred,lm.pred)
 
@@ -123,32 +136,54 @@ ggplot(preds) + geom_pointrange(aes(x=ind,
                                     y=fit,
                                     ymin=lwr,
                                     ymax=upr, 
-                                    linetype=est),position=position_dodge(width=0.6))
+                                    linetype=Model),
+                            position=position_dodge(width=0.6))+
+   xlab('Prediction') + 
+  ylab('Prediction') + 
+  theme_classic() 
+```
 
-insects_res <- TaxMeta(insects_ss,
-                       'lDD',
-                       distribution = 'norm',
-                       taxonomy = taxonomy,
-                       type='full',
-                       loo_waic = T,
-                       n.chains = 3,
-                       n.iter = 50e3,
-                       n.thin=25,
-                       n.burnin=10e3,
-                       return_MCMC=T)
-insects_res
+We can also compare estimated effects at a particular taxonomic level. For example, comparing estimates for species within families, we can see clear differences between estimates between models:
 
-plot(insects_ss$lDD,this.cv[,2], pch=16,xlim=c(0,4),ylim=c(0,4))
-points(insects_ss$lDD,lm.cv.pred, col=4, pch=16)
-arrows(insects_ss$lDD, this.cv[,1], insects_ss$lDD, this.cv[,3], length=0.05, angle=90, code=3)
-abline(a=0,b=1)
+\newpage
 
-plot((abs(lm.cv.pred-insects_ss$lDD)),(abs(this.cv[,2]-insects_ss$lDD)),pch=19)
-#arrows(insects_ss$lDD, q1, insects_ss$lDD, q3, length=0.05, angle=90, code=3)
-abline(a=0,b=1)
-df <- data.frame(lmt=(abs(this.cv[,2]-insects_ss$lDD)),lmm=(abs(lm.cv.pred-insects_ss$lDD)))
-abline(0,lm(lmt~0+lmm,data=df)$coef,col=2)
+```{r fig.cap='Estiamtes of species effects within three selected families from taxonomic models estiamted in LME4 and TaxMeta.', fig.width=11,fig.height=8}
 
+Specfx <- reSims %>% filter(groupFctr=='Species') %>% dplyr::select(-term,-median)
+Specfx$Model <- 'LME4'
+Specfx$Family <- insects_ss$Family[match(Specfx$groupID,insects_ss$Species)]
+Specfx$groupID <- factor(Specfx$groupID,levels=Specfx$groupID[order(Specfx$Family)])
+
+allfx <- summary(insects_res_full$result)[[1]]
+specfx <- data.frame(allfx[grepl('species_mu',rownames(allfx)),]) %>% dplyr::select(-Time.series.SE,-Naive.SE) %>% filter(levels(as.factor(unique(insects[!is.na(insects$lBDT),'Species']))) %in% insects_ss$Species)
+specfx$groupFctr <- 'Species'
+specfx$groupID <- Specfx$groupID
+colnames(specfx)[1:2] <- tolower(colnames(specfx)[1:2])
+specfx$Model <- 'TaxMeta'
+specfx$Family <- Specfx$Family
+specfx$groupID <- factor(specfx$groupID,levels=specfx$groupID[order(specfx$Family)])
+spec.fx <- rbind(specfx,Specfx) %>% group_by(Family) %>% filter(n()>70)
+
+
+
+ggplot(spec.fx) + geom_pointrange(aes(x=groupID,
+                                    y=mean,
+                                    ymin=mean-sd,
+                                    ymax=mean+sd,
+                                    linetype=Model,col=Family),
+                                  position=position_dodge(width=0.4)) + 
+  xlab('Species') + 
+  ylab('Effect') + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=8)) 
+```
+\elandscape
+\newpage
+
+Doing cross validation on TaxMeta takes a while, but is done here in full to compare models and illustrate differences:
+
+
+```{r fig.cap='Observed vs predicted degree day values from ten-fold cross validation applied to models estiamted in LME4 and TaxMeta.'}
 this.cvs <- matrix(NA,nrow(insects_ss), 3)
 for (i in 1:10){
   insects_test <- insects_ss
@@ -176,108 +211,57 @@ for (i in 1:10){
 
 par(mfrow=c(1,2))
 # LM predictions
-plot(insects_ss$lDD,lm.cv.spred[,1], pch=16,xlim=c(1,4),ylim=c(1,4))
+plot(insects_ss$lDD,
+     lm.cv.spred[,1], 
+     pch=16,
+     xlim=c(1,4),
+     ylim=c(1,4),
+     xlab='Observed',
+     ylab='Predicted')
 arrows(insects_ss$lDD, lm.cv.spred[,2], insects_ss$lDD, lm.cv.spred[,3], length=0.05, angle=90, code=3)
 abline(a=0,b=1)
 
 
-plot(insects_ss$lDD,this.cvs[,2], pch=16,xlim=c(1,4),ylim=c(1,4))
+plot(insects_ss$lDD,
+     this.cvs[,2], 
+     pch=16,
+     xlim=c(1,4),
+     ylim=c(1,4),
+     xlab='Observed',
+     ylab='Predicted')
 #points(insects_ss$lDD,lm.cv.spred[,1], col=4,pch=16)
 #arrows(insects_ss$lDD, lm.cv.spred[,2], insects_ss$lDD, lm.cv.spred[,3], length=0.05, angle=90, code=3,col=4)
 arrows(insects_ss$lDD, this.cvs[,1], insects_ss$lDD, this.cvs[,3], length=0.05, angle=90, code=3)
 abline(a=0,b=1)
+```
 
+Comparing the likelihood of the data under the predictions for the datapoints suggests far better estimates from the TaxMeta model (i.e., greater likelihood).
+
+```{r}
 sum(dnorm(insects_ss$lDD,lm.cv.spred[,1],(lm.cv.spred[,3]-lm.cv.spred[,2])/4,log = T))
 
 sum(dnorm(insects_ss$lDD,this.cvs[,2],(this.cvs[,3]-this.cvs[,1])/4,log = T))
 
-plot(abs(lm.cv.spred[,3]-insects_ss$lDD),abs(this.cvs[,3]-insects_ss$lDD))
-#arrows(insects_ss$lDD, q1, insects_ss$lDD, q3, length=0.05, angle=90, code=3)
-abline(a=0,b=1)
-
-plot(abs(lm.cv.pred-insects_ss$lDD),abs(this.cv[,2]-insects_ss$lDD))
-
-this.cvf <- matrix(NA,nrow(insects_ss), 3)
-for (i in 1:10){
-  insects_test <- insects_ss
-  insects_test[fam%in%which(fsamp==i),'lDD'] <- NA
-  insects_res_test <- TaxMeta(insects_test,
-                              'lDD',
-                              distribution = 'norm',
-                              taxonomy = taxonomy,
-                              type='full',
-                              cont_cov = 'lBDT',
-                              loo_waic = F,
-                              n.chains = 3,
-                              n.iter = 5e3,
-                              n.thin=2,
-                              n.burnin=2e3,
-                              return_MCMC=F)
-  means <- insects_res_test$result[[1]][,1]
-  q1 <- insects_res_test$result[[2]][,1]
-  q3 <- insects_res_test$result[[2]][,5]
-  pred <- means[grepl('pred',names(means))]
-  q1 <- q1[grepl('pred',names(q1))]
-  q3 <- q3[grepl('pred',names(q3))]
-  this.cvf[fam%in%which(fsamp==i),] <- cbind(q1,pred,q3)
-}
-
-plot(abs(lm.cv.fpred-insects_ss$lDD),abs(this.cvf[,2]-insects_ss$lDD))
-plot(lm.cv.fpred,this.cvf[,2])
-#arrows(insects_ss$lDD, q1, insects_ss$lDD, q3, length=0.05, angle=90, code=3)
-abline(a=0,b=1)
-
-
-```
-
-To plot the contributions of different taxonomic levels, simply plot the result:
-
-```{r plot, fig.width = 7,  fig.height = 5}
-
-plot(insects_res_full)
-
-plot(Cov = insects_res_full, 
-     Taxonomy = insects_res)
-
-```
-
-## Predictions
-
-To generate predictions at other taxonomic levels, simply add some bogus data to the data. Say, we need an estimate for a species for which the genus was not in the orginal dataset, but the family was part of the dataset:
-
-```{r predictions}
-
-insects_pred <- insects_ss
-insects_pred[nrow(insects_ss)+1,] <- insects_pred[11,]
-insects_pred[nrow(insects_ss)+2,] <- insects_pred[11,]
-
-insects_pred[nrow(insects_ss)+1,'Genus'] <- 'bogus_genus'
-insects_pred[nrow(insects_ss)+1,'Species'] <- 'Bogus species'
-insects_pred[nrow(insects_ss)+1,'lDD'] <- NA
-insects_pred[nrow(insects_ss)+2,'Species'] <- 'Bogus species2'
-insects_pred[nrow(insects_ss)+2,'lDD'] <- NA
-
-insects_res_pred <- TaxMeta(insects_pred,
-                       'lDD',
-                       distribution = 'norm',
-                       taxonomy = taxonomy,
-                       type='full',
-                       cont_cov = 'BDT',
-                       loo_waic = F,
-                       n.chains = 3,
-                       n.iter = 50e3,
-                       n.thin=25,
-                       n.burnin=10e3,
-                       return_MCMC=F)
-
-insects_res_pred
-
 ```
 
 ## Alternative models
-We can also compare alternative model formulations:
+We can also compare alternative model formulations in TaxMeta:
 
 ```{r run alternative models, cache=TRUE}
+
+insects_res_tax <- TaxMeta(insects_ss,
+                       'lDD',
+                       distribution = 'norm',
+                       taxonomy = taxonomy,
+                       save_tax=taxonomy,
+                       type='full',
+                       cont_cov = 'lBDT',
+                       loo_waic = T,
+                       n.chains = 3,
+                       n.iter = 150e3,
+                       n.thin=50,
+                       n.burnin=10e3,
+                       return_MCMC=F)
 
 insects_res_fixed <- TaxMeta(insects_ss,
                        'lDD',
@@ -288,9 +272,9 @@ insects_res_fixed <- TaxMeta(insects_ss,
                        scale=0.01,
                        loo_waic = T,
                        n.chains = 3,
-                       n.iter = 5e3,
-                       n.thin=2,
-                       n.burnin=1e3,
+                       n.iter = 150e3,
+                       n.thin=50,
+                       n.burnin=10e3,
                        return_MCMC=F)
 
 insects_res_gamma <- TaxMeta(insects_ss,
@@ -301,8 +285,8 @@ insects_res_gamma <- TaxMeta(insects_ss,
                        cont_cov = 'BDT',
                        loo_waic = T,
                        n.chains = 3,
-                       n.iter = 50e3,
-                       n.thin=25,
+                       n.iter = 150e3,
+                       n.thin=50,
                        n.burnin=10e3,
                        return_MCMC=F)
 
@@ -314,8 +298,8 @@ insects_res_unif <- TaxMeta(insects_ss,
                        cont_cov = 'BDT',
                        loo_waic = T,
                        n.chains = 3,
-                       n.iter = 50e3,
-                       n.thin=25,
+                       n.iter = 150e3,
+                       n.thin=50,
                        n.burnin=10e3,
                        return_MCMC=F)
 
@@ -328,7 +312,7 @@ And compare the results:
 loo_comp <- loo::compare(insects_res_fixed$loo,
              insects_res_gamma$loo,
              insects_res_unif$loo,
-             insects_res_full$loo)
+             insects_res_tax$loo)
 
 loo_comp <- data.frame(loo_comp)
 loo_comp$model <- do.call('rbind',strsplit(rownames(loo_comp),split = '\\$'))[,1]
@@ -337,7 +321,7 @@ loo_comp$loo_weight = loo_comp$weight
 waic_comp <- loo::compare(insects_res_fixed$waic,
              insects_res_gamma$waic,
              insects_res_unif$waic,
-             insects_res_full$waic)
+             insects_res_tax$waic)
 
 waic_comp <- data.frame(waic_comp)
 waic_comp$model <- do.call('rbind',strsplit(rownames(waic_comp),split = '\\$'))[,1]
@@ -352,11 +336,11 @@ knitr::kable(comp_tab[,c('model','looic','se_looic','loo_weight','waic','se_waic
 
 ```
 
-This comparison does not give a good idea of model performance, so lets try a plot:
+This comparison suggests that the taxonomic model is the most appropriate for this dataset. A comparison shows how the perception of taxonomic influence on the dependent variable changes among models: in the TaxMeta model, more of the variance is attributed to the species level and less to the genus level relative to the less flexible models.
 
 ```{r compare plot, fig.width = 7,  fig.height = 5}
 
-plot(Full=insects_res_full, 
+plot(Full=insects_res_tax, 
      Fixed =insects_res_fixed, 
      Gamma =insects_res_gamma,
      Uniform=insects_res_unif)

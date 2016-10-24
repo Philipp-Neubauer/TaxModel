@@ -2,8 +2,8 @@ require(dplyr)
 
 sizes <- read.table("MOMv3.3.txt",sep='\t')
 colnames(sizes) <- c("continent",'status','order','family','genus','species','lmass','cmass','ref')
-sizes <- sizes %>% 
-  filter(lmass>-100) %>% 
+sizes <- sizes %>%
+  filter(lmass>-100) %>%
   unique() %>%
   group_by(order,family,genus,species) %>%
   summarise(lmass = mean(mean(lmass)))
@@ -19,7 +19,7 @@ SPECIES = nidx(paste(sizes$genus,sizes$species,sep=' '))
 
 GE <- nidx(sizes$genus)
 
-# match unique species to family 
+# match unique species to family
 FAM <- nidx(sizes$family)
 
 # match unique family to order
@@ -43,7 +43,7 @@ jagsdata <- list(pred =pred ,
                  family_pred = FAM[pred],
                  order_pred = ORD[pred],
                  tau=1/(sizes$lmass*0.05)
-                 
+
 )
 
 require(R2jags)
@@ -94,7 +94,7 @@ jagsdata_rfx_h <- list(lmass = sizes$lmass,
                        family_pred = FAM[pred],
                        order_pred = ORD[pred],
                        tau=1/(sizes$lmass*0.05)
-                       
+
 )
 
 # hierarchical non-tree model - uniform prior on scale
@@ -216,7 +216,7 @@ JM_rfx_h <- jags.parallel(model.file = 'size-model_rfx_h.R',
 # JM_rfx_h
 # traceplot(JM_rfx_h)
 
-as.mcmc.rjags <- function (x, subs=NULL, ...) 
+as.mcmc.rjags <- function (x, subs=NULL, ...)
 {
   x <- x$BUGSoutput
   mclist <- vector("list", x$n.chains)

@@ -28,6 +28,53 @@ get_tax <- function(dataset, taxonomy){
   cbind(dataset,tax)
 }
 
+# mcmc
+coda.samples.dic <- function (model, variable.names = NULL, n.iter, thin = 1, ...)
+{
+
+  start <- model$iter() + thin
+  varnames=c(variable.names, c('deviance', 'pD'))
+  out <- jags.samples(model, varnames, n.iter, thin,
+                      type = "trace", ...)
+  deviance <- out$deviance
+  pD <- out$pD
+  out$deviance <- NULL
+  out$pD <- NULL
+  ans <- vector("list", model$nchain())
+  for (ch in 1:model$nchain()) {
+    ans.ch <- vector("list", length(out))
+    vnames.ch <- NULL
+    for (i in seq(along = out)) {
+      varname <- names(out)[[i]]
+      d <- dim(out[[i]])
+      if (length(d) < 3) {
+        stop("Invalid dimensions for sampled output")
+      }
+      vardim <- d[1:(length(d) - 2)]
+      nvar <- prod(vardim)
+      niter <- d[length(d) - 1]
+      nchain <- d[length(d)]
+      values <- as.vector(out[[i]])
+      var.i <- matrix(NA, nrow = niter, ncol = nvar)
+      for (j in 1:nvar) {
+        var.i[, j] <- values[j + (0:(niter - 1)) * nvar +
+                               (ch - 1) * niter * nvar]
+      }
+      vnames.ch <- c(vnames.ch, rjags:::coda.names(varname, vardim))
+      ans.ch[[i]] <- var.i
+    }
+    ans.ch <- do.call("cbind", ans.ch)
+    colnames(ans.ch) <- vnames.ch
+    ans[[ch]] <- mcmc(ans.ch, start = start, thin = thin)
+  }
+
+  dic <- list(deviance = mean(as.vector(deviance)), penalty = mean(as.vector(pD)), type = 'pD')
+  class(dic) <- "dic"
+  return(list(samples=mcmc.list(ans), dic=dic))
+}
+
+#random fx dummies
+afn <- function(x) as.numeric(factor(x))
 
 # parse random fx
 .parse_rfx <- function(random_fx,rfxix,type) {
@@ -50,6 +97,8 @@ get_tax <- function(dataset, taxonomy){
            random_fx,"_scale ~ dgamma(2,hyper_scale) \n")
   }
 }
+
+
 
 # parse taxonomic fx
 .parse_tax <- function(tax_fx,tax_next,taxix,type) {
@@ -110,12 +159,13 @@ get_tax <- function(dataset, taxonomy){
 .parse_scale_model <- function(type) {
   switch(type,
          fixed = '',
+         phylo = "scale ~ dgamma(1e-9,1e-9) \n",
          gamma = "scale ~ dgamma(1e-9,1e-9) \n",
          uniform = "scale ~ dunif(0.00001,100000) \n",
          full = "hyper_scale ~ dunif(0.00001,100000) \n")
 }
 
-.parse.params <- function(type, preds, loo_waic, taxonomy, study_epsilon, random_fx=NULL, save_tax=NULL) {
+.parse.params <- function(type, preds, loo_waic, taxonomy, study_epsilon, random_fx=NULL, save_tax=NULL, phylo=NULL) {
 
   #cat(random_fx)
   c('betas',
@@ -124,6 +174,7 @@ get_tax <- function(dataset, taxonomy){
   if(type=='full') c(paste0(taxonomy,'_scale'),"hyper_scale"),
   if(type=='full' & !is.null(random_fx)) paste0(random_fx,'_scale'),
   if(is.null(study_epsilon)) 'sd.epsilon',
+  if(!is.null(phylo)) 'sd.phylo',
   paste0('sd.',c(random_fx,taxonomy)),
   if(loo_waic==T) 'log_lik',
   if(any(preds)) 'pred'

@@ -8,13 +8,14 @@
 #'  \item \code{lnorm} for a log-normal distribution
 #'}
 #' @param study_epsilon the column name of individual study standard errors. This parameter is needed for a meta-analysis in the calssic sense, but is not needed if measurements are on the original scale, i.e., includes multiple datapoints for each level at the highest taxonomic resolution considered. If the latter is not the case, and study_epsilon is not available, variability at the highest taxonomic level cannot be estimated.
-#' @param taxonomy the column names of taxonomic levels to be considered. To be given in the order from highest resolution (e.g., species) to lowest (e.g., order). For species names, please ensure that these are unique for unique species, or use a [genus species] in the species column.
+#' @param taxonomy a vector of column names of taxonomic levels to be considered. To be given in the order from highest resolution (e.g., species) to lowest (e.g., order). For example: c(species, genus, family, order). For species names, please ensure that these are unique for unique species, or use a [genus species] in the species column.
 #' @param cont_cov column names of continuous covariates, if any.
 #' @param fixed_fx column names of fixed effects, if any.
 #' @param random_fx column names of random effects, if any.
-#' @param tree optional, a phylogenetic tree to be combined with taxonomic effects (see Hadfield & Nakagawa, 2010).
+#' @param phylo phylogeny or correlation matrix (such as obtained from ape::vcv) for the species in the dataset. Can combined with taxonomic effects (see Hadfield & Nakagawa, 2010).
+#' @param phylo_level the level of the tips of the phylogeny - should correspond to a column in the data. Defaults to species
 #' @param scale the scale parameter for the half-cauchy hierarchical priors. The scale See Gelman 2004 for the original rationale, and ?bayou::qhalfcauchy for an R implementation of this distribution.
-#' @param type the type of model to run, one of
+#' @param type the type of taxonomic model to run, one of
 #' \itemize{
 #'  \item \code{full} fully hierarchical model with taxonomic variances estimated within groups at each taxonomic level. The scale for each the taxonomic model as well as the other random effects is estimated hierachically, from a global hyper-scale parameter.
 #'  \item \code{gamma} the scale for all (taxonomic and non-taxonomic) random effects is hierarchically estimated from a vague gamma prior distribution.
@@ -37,12 +38,13 @@ TaxMeta <- function(dataset,
                     response,
                     distribution,
                     study_epsilon = NULL,
-                    taxonomy = c('species','genus','family','order'),
+                    taxonomy = NULL,
                     save_tax = NULL,
                     cont_cov = NULL,
                     fixed_fx = NULL,
                     random_fx = NULL,
-                    tree = NULL,
+                    phylo = NULL,
+                    phylo_level = 'species',
                     scale = NULL,
                     type='full',
                     regr_priors = NULL,
@@ -56,29 +58,30 @@ TaxMeta <- function(dataset,
 ){
 
 
-#   if(is.null(scale)) {
-#    scalefunc <- function(scale, max_data) abs(bayou::phalfcauchy(max_data, scale = scale)-0.75)
-#    scale <- optimize(scalefunc,interval = c(0.001,1000),max(abs(dataset[,response])), maximum = F)$objective
-#   }
+  #   if(is.null(scale)) {
+  #    scalefunc <- function(scale, max_data) abs(bayou::phalfcauchy(max_data, scale = scale)-0.75)
+  #    scale <- optimize(scalefunc,interval = c(0.001,1000),max(abs(dataset[,response])), maximum = F)$objective
+  #   }
 
   ##---- impute taxonomy
-  if(!all(taxonomy %in% colnames(dataset))){
-    stop("\n Full taxonomy not in dataset, please use the 'get_tax' function to get the taxonomy using the taxize package.", immediate. = T)
+  if (!is.null(taxonomy)){
+    if(!all(taxonomy %in% colnames(dataset))){
+      stop("\n Full taxonomy not in dataset, please use the 'get_tax' function to get the taxonomy using the taxize package.", immediate. = T)
 
+    }
+
+    ##--- lower case taxonomy names
+
+    tix <- match(taxonomy, colnames(dataset))
+    # just to make sure its not factors!
+    if(length(taxonomy)>1) {
+      dataset[,taxonomy] <- apply(dataset[,taxonomy],2,as.character)
+    } else {
+      dataset[,taxonomy] <- as.character(dataset[,taxonomy])
+    }
+    taxonomy <- tolower(taxonomy)
+    colnames(dataset)[tix] <- taxonomy
   }
-
-  ##--- lower case taxonomy names
-
-  tix <- match(taxonomy, colnames(dataset))
-  # just to make sure its not factors!
-  if(length(taxonomy)>1) {
-    dataset[,taxonomy] <- apply(dataset[,taxonomy],2,as.character)
-  } else {
-    dataset[,taxonomy] <- as.character(dataset[,taxonomy])
-  }
-  taxonomy <- tolower(taxonomy)
-  colnames(dataset)[tix] <- taxonomy
-
 
   NOBS = nrow(dataset)
   resp <- dataset[,response]
@@ -88,7 +91,7 @@ TaxMeta <- function(dataset,
   preds <- which(is.na(resp))
   npreds <- length(preds)
 
-  afn <- function(x) as.numeric(factor(x))
+
 
   ##---- test for study epsilon and estimable effects
   if(is.null(study_epsilon)) {
@@ -104,18 +107,31 @@ TaxMeta <- function(dataset,
 
   }
 
-  ##---- taxonomic effects
-  model_tax <- list()
-  ntax <- length(taxonomy)
-  taxix <- matrix(NA, NOBS, ntax)
-  #precaution
-  #dataset[,taxonomy] <- apply(dataset[,taxonomy],2,as.character)
+  if(!is.null(taxonomy)){
+    ##---- taxonomic effects
+    model_tax <- list()
+    ntax <- length(taxonomy)
+    taxix <- matrix(NA, NOBS, ntax)
+    #precaution
+    #dataset[,taxonomy] <- apply(dataset[,taxonomy],2,as.character)
 
-  if(!all(grepl(' ',dataset[,'species']))) dataset[!grepl(' ',dataset[,'species']),'species'] <- apply(dataset[!grepl(' ',dataset[,'species']),c('genus','species')],1,paste,collapse=' ')
-  taxonomy <- c(taxonomy,"grand")
-  for (t in 1:ntax){
-    taxix[,t] <- afn(dataset[,taxonomy[t]])
-    model_tax[[t]] <- .parse_tax(taxonomy[t],taxonomy[t+1],taxix[,t],type)
+    if(!all(grepl(' ',dataset[,'species'])) && all(c('genus','species') %in% taxonomy)) dataset[!grepl(' ',dataset[,'species']),'species'] <- apply(dataset[!grepl(' ',dataset[,'species']),c('genus','species')],1,paste,collapse=' ')
+    taxonomy <- c(taxonomy,"grand")
+    for (t in 1:ntax){
+      taxix[,t] <- afn(dataset[,taxonomy[t]])
+      model_tax[[t]] <- .parse_tax(taxonomy[t],taxonomy[t+1],taxix[,t],type)
+    }
+  }
+  ##---- phylogeny
+  if(!is.null(phylo)){
+    if(is(phylo) == "phylo"){
+      phylo <- solve(ape::vcv(phylo, corr = T))
+    } else {phylo <- solve(phylo)}
+    phyix <- afn(dataset[,which(grepl(paste0('\\b', phylo_level, '\\b'), colnames(dataset), ignore.case = T))])
+    stips <- max(phyix)
+    zeros=rep(0,stips)
+    model_phylo <- 'phylo_mu[1:stips] ~ dmnorm(zeros[1:stips],phylo[1:stips,1:stips]) \n sd.phylo ~ dgamma(1e-9,1e-9) \n'
+
   }
 
 
@@ -151,15 +167,18 @@ TaxMeta <- function(dataset,
     "model{ \n",
     "#data and prediction likelihood \n",
     "for(i in 1:NOBS){ \n",
-    ifelse(loo_waic,paste0("log_lik[i] <- logdensity.",distribution_sub,"(resp[i],",.parse_dist(distribution, study_epsilon),') \n',''),''),
-    paste0("resp[i] ~ d",distribution_sub,'(',.parse_dist(distribution, study_epsilon),')'), '\n',
-    "mu[i] <-betas[1:ncovs]%*%covs[i,1:ncovs] +",
-    ifelse(!is.null(random_fx),paste(paste0(random_fx,'_mu[rfxix[i,',1:nrfx,']]',collapse='+'),'+'),''),
-    paste0(taxonomy[1:ntax],'_mu[taxix[i,',1:ntax,']]',collapse='+'),"} \n",
+
     "# likelihood for loo and waic for observations only \n",
+    ifelse(loo_waic,paste0("log_lik[i] <- logdensity.",distribution_sub,"(resp[i],",.parse_dist(distribution, study_epsilon),') \n',''),''),
+    "# data model \n",
+    paste0("resp[i] ~ d",distribution_sub,'(',.parse_dist(distribution, study_epsilon),')'), '\n',
+    "mu[i] <-betas[1:ncovs]%*%covs[i,1:ncovs]",
+    ifelse(!is.null(random_fx),paste('+', paste0(random_fx,'_mu[rfxix[i,',1:nrfx,']]',collapse='+')),''),
+    ifelse(!is.null(taxonomy), paste('+', paste0(taxonomy[1:ntax],'_mu[taxix[i,',1:ntax,']]',collapse='+')),''),
+    ifelse(!is.null(phylo),'+ sd.phylo*phylo_mu[phyix[i]]',''),"} \n",
     '# save predictions \n',
     ifelse(any(preds),paste0("for(i in 1:npreds){ \n",
-                             ifelse(!is.null(study_epsilon),
+                             ifelse(is.null(study_epsilon),
                                     "pred[i] <- resp[preds[i]] \n} \n",
                                     "pred[i] <- mu[preds[i]] \n} \n")),''),
     "# fixed and regression effects \n",
@@ -167,7 +186,9 @@ TaxMeta <- function(dataset,
     "# random effects \n",
     ifelse(!is.null(random_fx),paste(paste(model_rfx),collapse='\n'),''),
     "# taxonomic effects \n",
-    paste(paste(model_tax),collapse='\n'),
+    ifelse(!is.null(taxonomy), paste(paste(model_tax),collapse='\n'),''),
+    "# phylo model \n",
+    ifelse(!is.null(phylo), model_phylo,''),
     "# scale model \n",
     .parse_scale_model(type),
     "# estimate epsilon if needed \n",
@@ -178,12 +199,12 @@ TaxMeta <- function(dataset,
 
 
   ###---- run jags model
+  load.module('dic') # necessary for pD and deviance monitor
+  load.module('glm')
 
-  params <- .parse.params(type, preds, loo_waic,taxonomy[1:ntax],study_epsilon, random_fx, save_tax)
   datas <- list(NOBS=NOBS,
                 ncovs=ncovs,
                 covs=covs,
-                taxix=taxix,
                 resp=resp,
                 regr_mu=regr_mu,
                 regr_tau=regr_tau
@@ -200,9 +221,18 @@ TaxMeta <- function(dataset,
   if(type=='full') datas[taxonomy[2:ntax]] <- lapply(taxonomy[2:ntax],get,data.frame(apply(dataset[,taxonomy[2:ntax]],2,afn)))
 
   if(!is.null(random_fx)){
-    #attach(data.frame(apply(dataset[,random_fx[1:nrfx]],2,afn)))
-    #datas[random_fx[1:ntax]] <- lapply(random_fx[1:nrfx],get,2)
     datas$rfxix=rfxix
+  }
+
+  if(!is.null(taxonomy)){
+    datas$taxix=taxix
+  }
+
+  if(!is.null(phylo)){
+    datas$phylo=phylo
+    datas$phyix=phyix
+    datas$stips=stips
+    datas$zeros=zeros
   }
 
   TM <- jags.model(file = 'taxmodel.R',
@@ -210,8 +240,15 @@ TaxMeta <- function(dataset,
                    data=datas)
 
   update(TM, n.burnin)
-  res <- coda.samples(TM, variable.names = params,
-                      n.iter = n.iter,thin = n.thin)
+
+  params <- .parse.params(type, preds, loo_waic,taxonomy[-length(taxonomy)],study_epsilon, random_fx, save_tax, phylo)
+
+  res <- coda.samples.dic(TM, variable.names = params,
+                          n.iter = n.iter,thin = n.thin)
+
+  dic <- res$dic
+  print(dic)
+  res <- res$samples
 
   res <- lapply(res, function(re) {
     colnames(re)[grepl('betas',colnames(re))] <- c('Intercept',unlist(apply(data.frame(dataset[,fixed_fx]),2,function(x) sort(unique(x)))),cont_cov)
@@ -225,7 +262,7 @@ TaxMeta <- function(dataset,
 
   res <- as.mcmc(lapply(res,function(x) as.mcmc(x[,!grepl('log_lik',colnames(x))])))
 
-  diagn <- try(gelman.diag(as.mcmc(lapply(res,function(x) as.mcmc(x[,!grepl('pred',colnames(x))])))))
+  diagn <- try(gelman.diag(as.mcmc(lapply(res,function(x) as.mcmc(x[,!grepl('pred',colnames(x)) & !grepl('_mu',colnames(x))])))))
 
   if(!return_MCMC) {
     res <- summary(res)
@@ -237,6 +274,7 @@ TaxMeta <- function(dataset,
       random_fx = random_fx,
       result=res,
       convergence = diagn,
+      dic=dic,
       waic = loo::waic(cres[,grepl('log_lik',colnames(cres))]),
       loo = loo::loo(cres[,grepl('log_lik',colnames(cres))])
     )
@@ -246,6 +284,7 @@ TaxMeta <- function(dataset,
       taxonomy = taxonomy,
       random_fx = random_fx,
       result=res,
+      dic=dic,
       convergence = diagn)
 
   }

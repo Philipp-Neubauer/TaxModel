@@ -1,7 +1,7 @@
 require(dplyr)
 require(INLA)
 
-DD <- read.csv("DD.csv")
+DD <- read.csv("../DD-example/DD.csv",stringsAsFactors = F)
 
 DD <- DD %>% filter(!is.na(EADDC) & !is.na(BDT.C))
 DD<- DD[-c(522,1003,1555),]
